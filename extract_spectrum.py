@@ -9,67 +9,91 @@
 from mpdaf.obj import Cube
 import argparse
 import os
+import re
+import numpy as np
+import sys
 import matplotlib.pyplot as plt
-
+import logging
+from regions import read_ds9
 
 # read arguments
-ap = argparse.ArgumentParser(description='Muse data to be loaded')
+ap = argparse.ArgumentParser(description='Parameters for spectrum extraction of a subcube region of the input cube')
 ap.add_argument("input_files", nargs='+', help="List of fits muse data cubes to be loaded")
-ap.add_argument("-c", "--center", nargs=1, help="Subcube center in degrees, separated by coma")
-ap.add_argument("-r", "--radius", nargs=1, help="Radius of the circle of the subcube in arcsec", default="5", type=float)
-ap.add_argument("-s", "--shape", nargs='?', help="Shape: box or circle, circle by default", default="circle", type=str)
-ap.add_argument("-o", "--output", nargs='?', help="Name of the output extracted spectrum")
+ap.add_argument("-r", "--region", nargs=1, help="Region file with the regions to be extracted", type=str)
+ap.add_argument("-o", "--outdir", nargs='?', help="Name of the output directory", default="subcubes", type=str)
+ap.add_argument('-s', "--sum", help="Switch to indicate whether the output spectrum should be summed or averaged", action='store_true')
 
 args = ap.parse_args()
 
 muse_cubes = args.input_files
-coordinates = args.center[0]
-subcube_center = coordinates.split(",")
-centerx = float(subcube_center[0])
-centery = float(subcube_center[1])
-subcube_radius = args.radius[0]
-region_shape = args.shape
-outputname = args.output
-i = 0
-plt.figure()
+region_file = args.region[0]
+outdir = args.outdir
+sum = args.sum
+
+scriptname = os.path.basename(__file__)
+
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(message)s', datefmt='%d-%b-%y %H:%M:%S')
+logger = logging.getLogger(scriptname)
+
+if os.path.isfile(region_file):
+    regs = read_ds9(region_file)
+    logger.info("Loaded %i region(s) from %s" % (len(regs), region_file))
+    logger.info(regs)
+else:
+    logger.error("Region file %s not found" % region_file)
+    sys.exit()
+
+if not os.path.isdir(outdir):
+    os.mkdir(outdir)
+
 
 for cubefile in muse_cubes:
 
     if os.path.isfile(cubefile):
-        print('Loading cube %s ...' % cubefile)
+        logger.debug('Loading cube %s ...' % cubefile)
         cube = Cube(cubefile)
+    else:
+        logger.warning("Cube %s not found. Skipping..." % cubefile)
+        continue
 
-        print("Extracting spectrum number %i  from cube %s around position (%s) with \
-        a radius of %.2f arcsec" % (i, cubefile, coordinates, subcube_radius))
-        if region_shape == 'circle':
-            subcube = cube.subcube_circle_aperture((centery, centerx), subcube_radius)
-        elif region_shape == 'box':
-            subcube = cube.subcube((centery, centerx), subcube_radius)
-        # free memory immediately
-        cube = None
-        spe = subcube.mean(axis=(1, 2))
-        image = subcube.sum(axis=0)
-
-        spe.info()
-        spe.plot()
-        plt.show()
-        if region_shape == 'box':
-            extraction_text = "%s(%s,%.2f\",%.2f\",0)" % (region_shape, coordinates, subcube_radius, subcube_radius)
-        elif region_shape == 'circle':
-            extraction_text = "%s(%s,%.2f\")" % (region_shape, coordinates, subcube_radius)
-        regtext = "# Region file format: DS9 version 4.1 \n global color=green dashlist=8 3 width=1 \
-font=\"helvetica 10 normal roman\" select=1 highlite=1 dash=0 fixed=0 edit=1 move=1 delete=1 include=1 source=1 \n \
-fk5 \n %s # color=cyan width=2 text={SRC} dash=1 \n" % extraction_text
-        if outputname != "":
-            regfile = open("%s%iextraction.reg" % (outputname, i), "w")
-            regfile.write(regtext)
-            spe.write("%s_spec%i.fits" % (outputname, i))
-            image.write("%s_img%i.fits" % (outputname, i))
-            subcube.write("%s_subcube%i.fits" % (outputname, i))
+    for reg, reg_index in zip(regs, np.arange(0, len(regs))):
+        plt.figure()
+        if type(regs[0]).__name__ != 'CircleSkyRegion':
+            logger.warning("Skipping region %s. Only circular regions are accepted for now.")
+            continue
         else:
-            regfile = open("%s%iextraction.reg" % (outputname, i), "w")
-            regfile.write(regtext)
-            spe.write("spectra%i.fits" % i)
-            image.write("%s_img%i.fits" % (outputname, i))
-            subcube.write("subcube%i.fits" % i)
-        regfile.close()
+            centerra = reg.center.fk5.ra.value
+            centerdec = reg.center.fk5.dec.value
+            subcube_radius = reg.radius.value
+
+            logger.info("Extracting spectrum number %i from cube %s around position (%s) with \
+            a radius of %.2f arcsec" % (reg_index, cubefile, (centerra, centerdec), subcube_radius))
+            try:
+                subcube = cube.subcube_circle_aperture((centerdec, centerra), subcube_radius)
+            except Exception as e:
+                logging.error("Exception occurred", exc_info=True)
+                continue
+            if sum:
+                print("Summing output spectra")
+                spe = subcube.sum(axis=(1, 2))
+            else:
+
+                print("Averaging output spectra")
+                spe = subcube.mean(axis=(1, 2))
+            image = subcube.sum(axis=0)
+
+            spe.info()
+            spe.plot()
+            plt.show()
+
+            text = reg.meta['label']
+
+            outname = re.sub("#.*text.*=\{|\}", "", text)
+            if outname == "":
+                outname = 'subcube%i' % reg_index
+
+            outcubename = cubefile.replace(".fits", "")
+            spe.write("%s/%s%s_spec.fits" % (outdir, outcubename, outname))
+            image.write("%s/%s%s_img.fits" % (outdir, outcubename, outname))
+            subcube.write("%s/%s%s_subcube.fits" % (outdir, outcubename, outname))
+    cube = None

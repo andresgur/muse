@@ -12,26 +12,69 @@ import numpy as np
 import os
 import astropy.units as u
 from astropy.constants import c
-import sys
+import math as m
 from astropy.stats import gaussian_fwhm_to_sigma
 from line import Line
-from lmfit.models import LorentzianModel, ConstantModel, LinearModel, GaussianModel
+import logging
+from lmfit.models import LorentzianModel, PolynomialModel, GaussianModel
+import sys
 sys.path.insert(0, '/home/agurpide/scripts/pythonscripts')
 import plot_utils.plot_functions as pf
 
 
-def compute_FWHM(fwhm, linepeak):
-    """Compute FWHM in km/s."""
-    fwhm = fwhm / linepeak * c.to('km/s').value
-    return fwhm
+def line_type_toint(line_type):
+    """Check whether the input line type is an integer i.e. multiple gaussian have to be fitted."""
+    try:
+        int(line_type)
+        return True
+    except ValueError:
+        return False
 
 
-def fit_continuum(spectrum, min_wa, max_wa,  mask_rest):
-    """Fits the continuum of the input spectrum masking the wavelenghts arrays provided.
-    The boolean mask_rest can be used to mask the spectrum from the maxixum wavelength given in max_wa
-    # provided until the last wavelenght in the spectrumself.
+def guess_init_line(data, wavelengths, initial_fwhm):
+    """Guess initial line parameters and continuum from the subspectrum.
+
+    Computes an initial guess for the continuum level, the width, position and peak of the line.
     Parameters
     ----------
+    data : the flux values of the spectrum
+    wavelenghts : the wavelength values
+    initial_fwhm : whether the full width half maximum should be guessed or not
+
+    """
+    fmin = data[0]
+    fmax = data[-1]
+    lmin = wavelengths[0]
+    lmax = wavelengths[-1]
+    lpeak = wavelengths[np.argmax(data)]
+    continuum = ((fmax - fmin) * lpeak + lmax * fmin - lmin * fmax) / (lmax - lmin)
+
+    if line.init_fwhm == 'None':
+        try:
+            initial_fwhm = subspec.fwhm(lpeak, continuum, False, unit=u.angstrom)
+        except ValueError:
+            logging.warning("Could not compute fwhm. Setting it to a constant initial value", exc_info=True)
+            initial_fwhm = def_fwhm
+    else:
+        initial_fwhm = float(line.init_fwhm)
+
+    sigma = initial_fwhm * gaussian_fwhm_to_sigma
+
+    pixel = subspec.wave.pixel(lpeak, nearest=True, unit=u.angstrom)
+    peak = data[pixel] - continuum
+    return continuum, sigma, lpeak, peak
+
+
+def fit_continuum(spectrum, min_wa, max_wa, mask_rest):
+    """Fits the continuum of the input spectrum masking the wavelenghts arrays provided.
+
+    Parameters
+    ----------
+    spectrum : the spectrum whose continuum is to be fitted.
+    min_wa : the minimum wavelength to consider in the fitting process (this can be an array too)
+    max_wa : the maximum wavelength to consider in the fitting process (this can be an array too)
+    mask_rest : boolean to indicate whether everything above the last maximum wavelenght should be mask (i.e. ignored)
+
     """
     for index in np.arange(len(max_wa)):
         print("Masking region from %s to %s" % (min_wa[index], max_wa[index]))
@@ -40,7 +83,7 @@ def fit_continuum(spectrum, min_wa, max_wa,  mask_rest):
 
     # mask wavelenghts from the highest input wavelenght until the end of the spectrum
     if mask_rest:
-        print("Masking everything above %s A in continuum fit"  % max_wa[-1])
+        print("Masking everything above %s A in continuum fit" % max_wa[-1])
         spectrum.mask_region(lmin=float(max_wa[-1]), lmax=None, unit=u.angstrom, inside=True)
 
     continuum = spectrum.poly_spec(1)
@@ -50,132 +93,310 @@ def fit_continuum(spectrum, min_wa, max_wa,  mask_rest):
     return continuum
 
 
+scriptname = os.path.basename(__file__)
+# logger
+
+logging.basicConfig(level=logging.DEBUG, format='%(message)s')
+logger = logging.getLogger(scriptname)
+
 # read arguments
 ap = argparse.ArgumentParser(description='Spectrum fits to be loaded')
 ap.add_argument("input_files", nargs='+', help="List of spectra to be loaded")
+ap.add_argument("-f", "--config_file", nargs='?', help="Config file with the lines to be fitted", default=os.environ['HOME'] + "/scripts/pythonscripts/muse/config_files/fit_spectrum.txt")
+ap.add_argument("-z", "--red_shift", nargs='?', help="Redshift of the object", default=0, type=float)
 
 args = ap.parse_args()
 
 spectra = args.input_files
+config_file = args.config_file
+red_shift = args.red_shift
 
 # create color array
 colors = pf.create_color_array(len(spectra))
+# default_fwhm in A
+def_fwhm = 1.8
+
+# fwhm
+max_fwhm = 20
+min_fwhm = 1.0
+
+# flags
+plot_initfit = 0
+plot_reference = 1
+plot_residuals = 0
+plot_result = 1
+plot_lines = 1
+plot_chisq = 0
+plot_comp = 1
 
 # text label params
-textfontsize = 5
+textfontsize = 7
 textabove = 15
+gauss_color = ['magenta']
+lorentzian_color = ['green']
+multiple_line_color = ['cyan', 'orange', 'brown', 'black']
+# linear model prefix
+continuum_prefix = 'continuum_'
+line_prefix = 'line_'
+cont_color = 'yellow'
 
-lorentzian = LorentzianModel()
+with open(config_file) as line_file:
 
-path_lines_file = os.environ['HOME'] + "/scripts/pythonscripts/muse/config_files/fit_spectrum.txt"
+    info_lines = np.genfromtxt(line_file, names=True, dtype=('U10', float, float, 'U10', float, 'U10', float, int), delimiter='\t\t')
+    logger.debug("Fitting %i line(s)" % info_lines.size)
+    lines = [Line(line[0], line[1], line[2], line[3], line[4], line[5], line[6], line[7]) for line in info_lines]
 
-with open(path_lines_file) as line_file:
-    info_lines = np.loadtxt(line_file, dtype='str', delimiter='\t\t')
-    lines = [Line(line[0], line[1], line[2], line[3], line[4], line[5]) for line in info_lines]
+spectrum_figure = plt.figure(1, figsize=(16.0, 10.0))
+spectrum_ax = spectrum_figure.add_subplot(1, 1, 1)
 
-for spectrum in spectra:
-    plt.figure()
+for spectrum, color in zip(spectra, colors):
+    spectrum_ax.minorticks_on()
     if os.path.isfile(spectrum):
-        print('Loading spectrum %s ...' % spectrum)
+        logger.info('Loading spectrum %s ...' % spectrum)
         # read data and variance
         spe = Spectrum(filename=spectrum)
         spe.info()
-        spe.plot(color='blue')
-
-        # continuum =fit_continuum(spe,min_wa,max_wa,True)
+        spe.plot(color=color, ax=spectrum_ax)
 
         for line in lines:
+            subspec = spe.subspec(line.lmin, line.lmax, unit=u.angstrom)
+            data = subspec._interp_data(True)
+            wavelengths = subspec.wave.coord(unit=u.angstrom)
+            continuum, sigma, lpeak, peak = guess_init_line(data, wavelengths, line.init_fwhm)
 
-            if line.lmin == line.lmax:
-                print("Error: lmin (%.2f) has same value as lmax (%.2f) for line %s" % (line.lmin, line.lmax, line))
-                sys.exit
+            if subspec.var is not None:
+                weights = 1.0 / np.sqrt(np.abs(subspec.var))
+                np.ma.fix_invalid(weights, copy=False, fill_value=0)
+            else:
+                logger.warning("Variances are null, using 1 as weights for the curve fitting")
+                weights = np.ones(len(wavelengths))
 
-            if line.type == 'G':
-                print("\nFitting line %s with Gaussian profile" % line)
-                guessed_fwhm = line.fwhm
-                if guessed_fwhm == 'None':
-                    guessed_fwhm = None
-                else:
-                    guessed_fwhm = float(guessed_fwhm)
-                line_gauss = spe.gauss_fit(lmin=line.lmin, lmax=line.lmax, unit=u.angstrom, plot=True, fwhm=guessed_fwhm)
+            if line.lmin >= line.lmax:
+                logger.error("lmin (%.2f) is equal or higher than lmax (%.2f) for line %s" % (line.lmin, line.lmax, line))
+                continue
 
-                FWHM = compute_FWHM(line_gauss.fwhm, line_gauss.lpeak)
-                print("FWHM (km/s) %.2f \n" % FWHM)
-                plt.text(line_gauss.lpeak, line_gauss.peak * 1.4 + line_gauss.cont * 1.3, line, fontsize=textfontsize)
-                line_gauss.print_param()
-            elif line.type == 'A':
-                print("\nFitting line %s with asymmetric Gaussian profile" % line)
-                line_agauss = spe.gauss_asymfit(lmin=line.lmin, lmax=line.lmax, unit=u.angstrom, plot=True)
+            # fit multiple gaussians case
+            if line_type_toint(line.type):
 
-                plt.text(line_agauss[0].lpeak, line_agauss[0].peak, line + line_agauss[0].cont + textabove, fontsize=textfontsize)
-                FWHM = compute_FWHM(line_agauss[0].fwhm, line_gauss[0].lpeak)
+                # name of first line model
+                line_prefixes = ["%s%i" % (line_prefix, 0)]
 
-                print("FWHM (km/s) %.2f \n" % FWHM)
-                line_agauss[0].print_param()
+                linecolor = multiple_line_color
 
+                linemodel = GaussianModel(prefix=line_prefixes[0])
+
+                for gauss_index in np.arange(1, int(line.type)):
+                    current_prefix = "%s%i" % (line_prefix, gauss_index)
+                    current_line = GaussianModel(prefix=current_prefix)
+                    linemodel += current_line
+                    line_prefixes.append(current_prefix)
+
+            # one gaussian case
+            elif line.type == 'G':
+
+                linecolor = gauss_color
+                line_prefixes = ["%s%i" % (line_prefix, 0)]
+                linemodel = GaussianModel(prefix=line_prefixes[0])
+
+            # lorentzian line case
             elif line.type == 'L':
-                print("\nFitting line %s with Lorentzian profile" % line)
-                subspec = spe.subspec(line.lmin, line.lmax, unit=u.angstrom)
-                data = subspec._interp_data(False)
-                wavelengths = subspec.wave.coord(unit=u.angstrom)
-                fmin = data[0]
-                fmax = data[-1]
-                lmin = wavelengths[0]
-                lmax = wavelengths[-1]
-                lpeak = wavelengths[np.argmax(data)]
-                continuum = ((fmax - fmin) * lpeak + lmax * fmin - lmin * fmax) / (lmax - lmin)
 
-                continuumModel = LinearModel()
-                fwhm = subspec.fwhm(lpeak, continuum, False, unit=u.angstrom)
-                sigma = fwhm * gaussian_fwhm_to_sigma
-                pixel = subspec.wave.pixel(lpeak, nearest=True, unit=u.angstrom)
-                peak = data[pixel] - continuum
+                linecolor = lorentzian_color
+                line_prefixes = ["%s%i" % (line_prefix, 0)]
+                linemodel = LorentzianModel(prefix=line_prefixes[0])
 
-                if subspec.var is not None:
-                    weights = 1.0 / np.sqrt(np.abs(subspec.var))
+            logger.info("\n Fitting line %s with %s profile and with polynomial of degree %i for the continuum" % (line, linemodel.name, line.deg_cont))
+
+            if line.deg_cont > 7:
+                logger.warning("Maximum degree for the polynomial continuum fitting is 7. We will use this value instead of the provided: %i" % line.deg_cont)
+                line.deg_cont = 7
+
+            continuumModel = PolynomialModel(degree=int(line.deg_cont), prefix=continuum_prefix)
+
+            model = linemodel + continuumModel
+
+            for paramname in model.param_names:
+                if 'center' in paramname:
+                    max = line.lmax
+                    min = line.lmin
+                    value = lpeak
+                    lpeak += line.linesep
+
+                elif 'sigma' in paramname:
+                    min = min_fwhm * gaussian_fwhm_to_sigma
+                    max = max_fwhm * gaussian_fwhm_to_sigma
+
+                    value = sigma
+
+                elif 'amplitude' in paramname:
+                    min = 0
+                    max = 8 * peak * m.sqrt(2 * m.pi) + continuum
+                    value = peak * m.sqrt(2 * m.pi) + continuum
+
+                elif 'c0' in paramname:
+                    min = 0
+                    max = 2 * continuum
+                    value = continuum
                 else:
-                    print("Warning:Variances are null, using 1 as weights for the curve fitting")
-                    weights = np.ones(len(wavelengths))
-                model = lorentzian + continuumModel
-                # model.guess(center=lpeak,sigma=sigma,amplitude=flux,c=continuum)
-                output = model.fit(data, x=wavelengths, center=lpeak, sigma=sigma, amplitude=peak, slope=0, intercept=continuum, weights=weights)
-                best_fit_params = output.params
-                line_center = best_fit_params.get("center").value
-                line_peak = best_fit_params.get("height").value
-                fwhm = best_fit_params.get("fwhm").value
+                    min = -2
+                    max = 2
+                    value = 0
 
-                FWHM = compute_FWHM(fwhm, line_center)
+                print("Value Max Min %s \n %.2f %.2f %.2f" % (paramname, value, max, min))
+                model.set_param_hint(paramname, value=value, vary=True, min=min, max=max)
 
-                plt.text(line_center, line_peak + textabove, line, fontsize=textfontsize)
+            # expected line center
+            line.ex_center = (1 + red_shift) * line.lref
+            logger.info("Expected line position: %.1f" % line.ex_center)
 
-                print("FWHM (km/s) %.2f \n" % FWHM)
+            # fit model
+            output = model.fit(data, x=wavelengths, weights=weights)
+            logger.debug(output.fit_report())
+            best_fit_params = output.params
+            line.chisq = output.chisqr
+            line.dof = output.nfree
+            mod_components = output.eval_components(x=wavelengths)
+            # continuum at line peak
+            cont_peak = mod_components[continuum_prefix][np.argmax(data)]
 
-                continuum = best_fit_params.get("intercept").value
+            # iterate each line model component
+            for prefix, index in zip(line_prefixes, np.arange(0, line.line_components)):
 
-                height = best_fit_params.get("height").value - continuum
+                line_center = best_fit_params.get("%scenter" % prefix)
+                line_peak = best_fit_params.get("%sheight" % prefix)
+                fwhm = best_fit_params.get("%sfwhm" % prefix)
+                line_flux = best_fit_params.get("%samplitude" % prefix)
 
-                amplitude = best_fit_params.get("amplitude").value
-                print("FWHM (A) %.2f" % fwhm)
-                print("Flux %.2f" % amplitude)
-                print("Line center %.2f vs Line reference wavelength %.2f (A)" % (line_center, line.lref))
+                plt.text(line_center, line_peak.value + textabove, line, fontsize=textfontsize)
 
-                plt.plot(wavelengths, output.best_fit, 'g-')
-            elif line.type == 'D':
-                print("\nFitting line %s with Double Gaussian profile" % line)
+                logger.debug("Flux %.2f" % line_flux.value)
+                # FWHM
+                fwhmkms = fwhm.value / line_center * c.to('km/s').value
+                fwhmkm_std = c.to('km/s').value * (fwhm.stderr / line_center.value + fwhm.value * line_center.stderr / line_center.value**2)
+                logger.debug("FWHM %.2f (%.2f) A (km/s)  \n" % (fwhm.value, fwhmkms))
 
-                line_dgauss = spe.gauss_dfit(lmin=line.lmin, lmax=line.lmax, wratio=1.54, unit=u.angstrom, plot=True)
+                line_shift = line_center.value - line.ex_center
+                line_shift_kms = c.to('km/s').value * (line_center.value - line.ex_center) / line.ex_center
+                line_shift_kms_std = c.to('km/s').value * (line_center.stderr) / line.ex_center
 
-                # plt.text(line_dgauss[0].lpeak,line_dgauss[0].peak,line  + line_dgauss[0].cont  + textabove,fontsize=textfontsize)
-                FWHM1 = compute_FWHM(line_dgauss[0].fwhm, line_dgauss[0].lpeak)
-                FWHM2 = compute_FWHM(line_dgauss[1].fwhm, line_dgauss[1].lpeak)
+                logger.debug("Line shift %.2f (%.2f) A (km/s)" % (line_shift, line_shift_kms))
 
-                print("FWHM (km/s) of line 1 %.2f \n" % FWHM1)
-                print("FWHM (km/s) %.2f \n" % FWHM2)
-                line_dgauss[0].print_param()
-                line_dgauss[1].print_param()
+                # store line fitting
+                line.center[index] = line_center.value
+                line.center_std[index] = line_center.stderr
+                line.flux[index] = line_flux.value
+                line.flux_std[index] = line_flux.stderr
+                line.fwhm[index] = fwhmkms
+                line.fwhm_std[index] = fwhmkm_std
+                line.shift[index] = line_shift_kms
+                line.shift_std[index] = line_shift_kms_std
+                line.int[index] = line_peak.value
+                line.int_std[index] = line_peak.stderr
+                # equivalent width line flux / cont flux
+                line.eq[index] = line.flux[index] / cont_peak
 
-        plt.minorticks_on()
-        outputfile = spectrum.replace(".fits", "fit.pdf")
-        plt.savefig(outputfile, bbox_inches='tight')
+            if plot_residuals:
+                # output.plot(spectrum_ax)
+                output.plot_residuals()
 
-plt.show()
+            if plot_reference:
+                spectrum_ax.axvline(x=line.ex_center, ls='--', color='gray', alpha=0.5)
+
+            spectrum_ax.plot(wavelengths, output.best_fit, 'red')
+
+            if plot_comp:
+                spectrum_ax.plot(wavelengths, mod_components[continuum_prefix], cont_color)
+                for prefix, color in zip(line_prefixes, linecolor):
+                    spectrum_ax.plot(wavelengths, mod_components[continuum_prefix] + mod_components[prefix], color)
+
+        #    spectrum_ax.fill_between(wavelengths, output.best_fit - uncertainties, output.best_fit + uncertainties, color='yellow')
+            if plot_initfit:
+                spectrum_ax.plot(wavelengths, output.init_fit, linecolor, ls='--')
+
+    # write fit spectrum figure
+    outputfile_fig = spectrum.replace(".fits", "fit.pdf")
+    spectrum_figure.savefig(outputfile_fig, bbox_inches='tight')
+
+    # write fit lines output
+    outputfile_dat = spectrum.replace(".fits", "fit.dat")
+    out_string = ""
+    string_array = ["%s\t\t%.3f\t\t%.1f\t\t%.1f\t\t%.2f\t\t%.0f\t\t%.0f\t\t%.0f\t\t%.0f\t\t%.0f\t\t%.0f\t\t%.1f\t\t%.1f\t\t%.1f\t\t%.0f\t\t%i\t\t%.1f\n" % (line.name,
+                    line.lref, line.ex_center, line.center[index], line.center_std[index], line.shift[index], line.shift_std[index], line.fwhm[index],
+                    line.fwhm_std[index], line.flux[index], line.flux_std[index], line.int[index], line.int_std[index], line.eq[index], line.chisq, line.dof,
+                    line.chisq / line.dof) for line in lines for index in np.arange(0, line.line_components)]
+    out_string = "".join(string_array)
+
+    with open(outputfile_dat, "w") as out_file:
+        out_file.write("#name\t\trest_wa\t\tex_center\t\tfit_center\t\tstd\t\tshift\t\tstd\t\tfwhm\t\tstd\t\tflux\t\tstd\t\tint\t\tstd\t\tEW\t\tchi\t\tdof\t\tchisqr\n")
+        out_file.write(out_string)
+
+if plot_lines:
+    line_figure = plt.figure(2, figsize=(16.0, 10.0))
+
+    plt.minorticks_on()
+    plt.xlabel('FWHM (km/s)', fontsize=20)
+    plt.ylabel('Line shift (km/s)', fontsize=20)
+    logger.debug("Line FWHM(km/s) Flux Shift(km/s)")
+    #[print("%s: %.2f %.2f %.2f" % (line.name, line.fwhm, line.flux, line.shift)) for line in lines]
+
+    for line in lines:
+        if line.type == 'L':
+            marker = 'o'
+        else:
+            marker = '^'
+        if 'Fe' in line.name:
+            color = 'orange'
+        elif 'He' in line.name:
+            color = 'yellow'
+        elif 'H' in line.name or 'Pa' in line.name:
+            color = 'green'
+        elif 'O' in line.name:
+            color = 'red'
+        elif 'N' in line.name:
+            color = 'cyan'
+        elif 'Cl' in line.name:
+            color = 'blue'
+        else:
+            color = 'magenta'
+        for index in np.arange(0, line.line_components):
+            plt.errorbar(line.fwhm[index], line.shift[index], xerr=line.fwhm_std[index], yerr=line.shift_std[index], label=line.name,
+                         fmt=marker, markersize=2, color=color)
+    plt.legend(fontsize=14, loc='best', ncol=3)
+    line_out = spectrum.replace(".fits", "lines.pdf")
+    line_figure.savefig(line_out, bbox_inches='tight')
+
+if plot_chisq:
+    chisq_figure = plt.figure(2, figsize=(16.0, 10.0))
+
+    plt.minorticks_on()
+    plt.xlabel('$\chi$', fontsize=20)
+    plt.ylabel('dof', fontsize=20)
+
+    for line in lines:
+        if line.type == 'L':
+            marker = 'o'
+        else:
+            marker = '^'
+        if 'Fe' in line.name:
+            color = 'orange'
+        elif 'He' in line.name:
+            color = 'yellow'
+        elif 'H' in line.name or 'Pa' in line.name:
+            color = 'green'
+        elif 'O' in line.name:
+            color = 'red'
+        elif 'N' in line.name:
+            color = 'cyan'
+        elif 'Cl' in line.name:
+            color = 'blue'
+        else:
+            color = 'magenta'
+
+        plt.scatter(line.chisq, line.dof, label=line.name, color=color)
+        plt.scatter(line.dof, line.dof, color='gray')
+    plt.legend(fontsize=14, loc='best', ncol=3)
+    chisq_out = spectrum.replace(".fits", "chisq.pdf")
+    chisq_figure.savefig(chisq_out, bbox_inches='tight')
+
+if plot_result:
+    plt.show()
