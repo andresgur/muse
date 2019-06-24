@@ -9,7 +9,8 @@ class Line:
     """Class that holds line parameters for easy manipulation."""
 
     def __init__(self, name, lmin, lmax, type, lref, init_fwhm=None, line_sep=0, deg_cont=1, fwhm=None, fwhm_std=None,
-                 flux=None, flux_std=None, shift=None, shift_std=None, chisq=None, dof=None):
+                 flux=None, flux_std=None, shift=None, shift_std=None, chisq=None, dof=None, present=None):
+        """Shift and FWHM are in km/s."""
         self.name = name
         self.lmin = lmin
         self.lmax = lmax
@@ -38,5 +39,6 @@ class Line:
         self.int_std = np.empty(self.line_components)
         self.chisq = chisq
         self.dof = dof
+        self.present = None
     def __str__(self):
         return self.name
