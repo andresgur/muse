@@ -8,14 +8,14 @@
 
 import argparse
 import os
-from mpdaf.obj import Image, Cube, iter_ima
+from mpdaf.obj import Image, Cube
 import logging
 import muse_utils as mu
 import numpy as np
 
 ap = argparse.ArgumentParser(description='Cuts Cube or Image from a region file')
 ap.add_argument("input_file", nargs=1, help="Image or cube to be cut")
-ap.add_argument("-o", "--outname", nargs='?', help="Output file name", default=None)
+ap.add_argument("-o", "--outname", nargs='?', help="Output file name, autonaming otherwise (cutinput_file.fits)", default=None)
 ap.add_argument("-r", "--region", nargs=1, help='Region file to cut the cube')
 
 args = ap.parse_args()
@@ -32,7 +32,6 @@ stream_handler.setLevel(logging.DEBUG)
 stream_handler.setFormatter(out_format)
 logger.addHandler(stream_handler)
 
-
 region_file = args.region[0]
 input_file = args.input_file[0]
 
@@ -42,15 +41,20 @@ try:
     logger.info("Trying to load input %s as a %s..." % (input_file, input_type))
     input_mpdaf = Cube(input_file)
     img = input_mpdaf[0, :, :]
-    logger.info("Masking pixels from region %s" % region_file)
+    logger.info("Masking pixels from region %s ..." % region_file)
     mask = mu.region_to_mask(img, region_file)
 
-    # mask every image
+    img = None  # free memory
+
+    # mask every pixel of the cube with the mask
     input_mpdaf.mask[:, :, :] = mask
 
+    mask = None  # free memory
+
     # get rid of the masked values
-    logger.info("Cropping cube")
+    logger.info("Cropping cube...")
     input_mpdaf.crop()
+    input_mpdaf.unmask()
 
 except ValueError:
 
@@ -63,6 +67,7 @@ except ValueError:
 
     input_mpdaf.mask[np.where(mask)] = True
     input_mpdaf.crop()
+    input_mpdaf.unmask()
 
 input_mpdaf.primary_header["HISTORY"] = "Cut with region %s" % region_file
 input_mpdaf.write("cut%s" % os.path.basename(input_file))

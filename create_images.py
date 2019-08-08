@@ -37,11 +37,6 @@ logger = logging.getLogger(scriptname)
 logger.setLevel(logging.DEBUG)
 out_format = logging.Formatter('%(name)s - %(levelname)s - %(message)s')
 
-# handler
-stream_handler = logging.StreamHandler()
-stream_handler.setLevel(logging.DEBUG)
-stream_handler.setFormatter(out_format)
-logger.addHandler(stream_handler)
 
 if not os.path.isdir(outdir):
     os.mkdir(outdir)

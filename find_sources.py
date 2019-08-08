@@ -66,7 +66,7 @@ def get_region_coords(region):
 # read arguments
 parser = argparse.ArgumentParser(description='Regions must be in WCS in angles and radius in arcseconds')
 parser.add_argument("--regions", help="Circular regions where to look for sources in the catalog. Defaults to image center if any", nargs='*', type=str)
-parser.add_argument("fits", help="Fits file with epoch, field of view size, coordinates, etc", nargs=1, type=str)
+parser.add_argument("fits", help="Fits image file with epoch, field of view size, coordinates, etc", nargs=1, type=str)
 parser.add_argument("-c", "--catalog", type=str, choices=["simbad", "gaia"], default="gaia", help='Catalog search')
 parser.add_argument("-r", "--radius", help='Radius search in arcseconds if no region is provided, default 70 arcsec (~ MUSE field of view in WFM)', type=float, nargs='?', default=70)
 
@@ -145,7 +145,7 @@ if args.regions is not None:
 
                 out_table = "%i%s" % (index, out_region.replace(".reg", ".csv"))
                 result_table.write(out_table, overwrite=True, format='csv')
-                print(result_table.colnames)
+                
                 for row in result_table:
                     ra = ("%s" % row['RA']).replace(" ", ":")
                     dec = ("%s" % row['DEC']).replace(" ", ":")

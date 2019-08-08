@@ -17,7 +17,7 @@ ap = argparse.ArgumentParser(description='Spectrum fits to be loaded')
 ap.add_argument("-n", "--numerators", nargs='+', help="The line maps to be added in the numerator of the line ratio")
 ap.add_argument("-d", "--denominator", nargs=1, help="The line map for the denominator")
 ap.add_argument("-o", "--outdir", nargs='?', help="Output dir", default='lineratios')
-ap.add_argument("-f", "--file", nargs='?', help="Output file name", default='lineratio.fits')
+ap.add_argument("-f", "--file", nargs='?', help="Output file name (without fits ending)", default='lineratio.fits')
 args = ap.parse_args()
 
 linemaps = args.numerators
@@ -58,6 +58,8 @@ ratio_fits = fits.PrimaryHDU(data=numerator_data / map2data, header=linemap2fits
 ratio_fits.data[np.where(map2data is None)] = None
 
 ratio_fits.header['COMMENT'] = "Ratio of %s/%s line maps" % (added_maps_log, linemap2)
+if ratio_fits.header['WCSAXES'] == 3:
+    ratio_fits.header['WCSAXES'] = 2
 
 ratio_fits.writeto(outdir + "/" + outname + ".fits", overwrite=True)
 print('Line ratio %s/%s written to %s/%s.fits' % (added_maps_log, linemap2, outdir, outname))

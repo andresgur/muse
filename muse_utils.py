@@ -17,22 +17,20 @@ import sys
 from astropy.io import fits
 
 
-def read_psf_fits(fits_file, extension):
+def read_psf_fits(fits_file, extension=1):
+    """Read PSF file produced by determine_psf script
+    Returns astropy table"""
     if not os.path.isfile(fits_file):
         sys.exit()
 
-    with fits.open(fits_file) as hdul:
-        fwhm = hdul[extension].data['FWHM']
-        if 'Beta' in hdul[extension].header:
-            beta = float(hdul[extension].header["Beta"])
-        else:
-            beta = None
-        return fwhm, beta
+    hdul = fits.open(fits_file)
+    print("Reading data from %s" % hdul[extension].name)
+    return hdul[extension].data, hdul[extension].header, hdul[extension].name
 
 
 def get_atm_seeing(input_mpdaf):
     try:
-        return input_mpdaf.primary_header["SKY_RES"] * u.arcsec
+        return input_mpdaf.primary_header["HIERARCH ESO TEL IA FWHMLIN"] * u.arcsec
     except KeyError:
         return None
 
@@ -49,7 +47,7 @@ def region_to_mask(image, region):
     Parameters:
     fits : the fits file you want the mask for (Cube or Image)
     region : the region file with which you want to create the mask (path)
-    returns a ndarray with True and False values
+    returns a ndarray with 0 for masked values and 1 for non-masked values
     """
     mask_region = pyregion.open(region)
     mask = mask_region.get_mask(hdu=image.get_data_hdu())
@@ -108,6 +106,8 @@ def add_zlabel(image_file, units):
         zlabel = 'v (km/s)'
     elif 'snr' in image_file:
         zlabel = '$\sigma$'
+    if 'ratio' in image_file:
+        zlabel = ""
 
     return zlabel
 
@@ -148,6 +148,7 @@ def create_grid(outname, *image_files, region=None, cutting_region=None, vmin=No
         format_axis(ax, 15)
 
     img_figure.subplots_adjust(hspace=0)
+    plt.show()
 
     save_plot(img_figure, outname)
     plt.close(img_figure)
@@ -176,10 +177,10 @@ def plot_image(outname, image_file, region=None, cutting_region=None, vmin=None,
         image[np.where(mask)] = True
         image.crop()
 
-    image.plot(ax=ax, scale='linear', colorbar=colorbar, show_xlabel=True, show_ylabel=True, zscale=False, vmin=vmin, vmax=vmax)
+    image.plot(ax=ax, scale='linear', colorbar=colorbar, show_xlabel=True, show_ylabel=True, zscale=True, vmin=vmin, vmax=vmax)
 
-    ax.set_xlabel('Ra')
-    ax.set_ylabel('Dec')
+    ax.set_xlabel('Ra', fontsize=20)
+    ax.set_ylabel('Dec', fontsize=20)
     format_axis(ax)
 
     if region is not None:
@@ -197,18 +198,18 @@ def plot_image(outname, image_file, region=None, cutting_region=None, vmin=None,
 def tokovinin_model(seeing_ref, wavelengths, wave_front=22 * u.m):
     """Compute FWHM as a function of wavelength from Tokovinin, A. 2002, PASP, 114, 1156. Returns the of the FWHM in arcseconds.
     Parameters
-    seeing_ref : the atmospheric seeing in arcseconds for lambda = 5000 A in angle units
+    seeing_ref : the atmospheric seeing in arcseconds for lambda = 5000 A in angle units (i.e. FWHM)
     wave_front : the wavefront outer scale lenght. Default to the Paranal value Conan, R., Ziad, A., Borgnino, J., Martin, F., & Tokovinin, A. A. 2000,
     in Interferometry in Optical Astronomy, eds. P. Léna, & A. Quirrenbach,
     Proc. SPIE, 4006, 963
     wavelengths : in angstroms
     """
     prop_constant = seeing_ref * (5000 * u.angstrom) ** (0.2)
-    seeing = prop_constant * wavelengths.to(u.angstrom) ** (-0.2)
+    epsilon_0 = prop_constant * wavelengths.to(u.angstrom) ** (-0.2)  # seeing expressed in FWHM
 
-    r_0 = 0.976 * wavelengths / seeing.to(u.rad).value
+    r_0 = 0.976 * wavelengths / epsilon_0.to(u.rad).value  # Fried parameter
 
-    return seeing.to("arcsec").value * np.sqrt(1 - 2.183 * (r_0 / wave_front.to(u.angstrom)) ** 0.356)
+    return epsilon_0.to("arcsec").value * np.sqrt(1 - 2.183 * (r_0 / wave_front.to(u.angstrom)) ** 0.356)
 
 
 def save_plot(figure, outputfile_name):

@@ -17,8 +17,15 @@ def clean_images(images, snrmap, outdir):
     for image in images:
         if os.path.isfile(image):
             hdul = fits.open(image)
-            hdul[0].data[np.where(snr_map[0].data < sthreshold)] = None
-            hdul[0].header['COMMENT'] = "Used a signal to noise ratio of %.2f to filter this image" % sthreshold
+            if "vel" in image or 'z' in image:
+                hdul[0].data[np.where(np.isnan(snr_map[0].data))] = np.nan
+                hdul[0].header['COMMENT'] = "Used map %s to filter this image" % snrmap.filename
+            else:
+                hdul[0].data[np.where(hdul[0].data == 0)] = np.nan
+                hdul[0].data[np.where(snr_map[0].data < sthreshold)] = np.nan
+                hdul[0].header['COMMENT'] = "Used a signal to noise ratio of %.2f to filter this image" % sthreshold
+            if hdul[0].header["WCSAXES"] == 3:
+                hdul[0].header["WCSAXES"] = 2
             hdul.writeto("%s/clean%s" % (outdir, os.path.basename(image)), overwrite=True)
             print("Cleaned and stored %s image" % image)
             hdul.close()
@@ -48,11 +55,15 @@ if not os.path.isdir(outdir):
 if file_map != "" and os.path.isfile(file_map):
     snr_map = fits.open(file_map)
 
+
 elif rootname != "":
-    file_map = glob.glob('./%s*snr*%s.fits' % (rootname, line))[0]
-    if os.path.isfile(file_map):
-        print("Found %s SNR map" % file_map)
-        snr_map = fits.open(file_map)
+    file_map = glob.glob('./%s*snr*%s.fits' % (rootname, line))
+    if len(file_map) == 0:
+        print("SNR map with rootname %s for line %s not found!" % (rootname, line))
+        sys.exit()
+    elif os.path.isfile(file_map[0]):
+        print("Found %s SNR map" % file_map[0])
+        snr_map = fits.open(file_map[0])
 
     else:
         print("Signal to noise ratio map %s does not exist!" % file_map)
@@ -64,9 +75,12 @@ else:
 print('Loaded signal to noise ratio map %s successfully' % file_map)
 
 if rootname != "":
-    images_toclean = glob.glob('./%s*%s.fits' % (rootname, line))
+    images_toclean = glob.glob('./%s*[^snr]*%s.fits' % (rootname, line))
 
-    clean_images(images_toclean, snr_map, outdir)
+    if len(images_toclean) == 0:
+        print("No line maps found with root %s for line %s" % (rootname, line))
+    else:
+        clean_images(images_toclean, snr_map, outdir)
 
 if args.image is not None:
     clean_images(args.image, snr_map, outdir)

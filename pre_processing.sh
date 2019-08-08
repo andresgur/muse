@@ -1,5 +1,5 @@
 # paths
-hst_image="$HOME/optical_data/NGC0625/MAST_2019-06-12T1101/HLA/hst_08708_02_wfpc2_f555w_pc/hst_08708_02_wfpc2_f555w_pc_drz.fits" # path to HST image to adjust coordintes
+hst_image="$HOME/optical_data/NGC1672/MAST_2019-06-11T1148/HLA/hst_10354_01_acs_wfc_f550m/hst_10354_01_acs_wfc_f550m_drz.fits" # path to HST image to adjust coordintes
 input_cube="ADP.2016-06-20T16_43_08.136.fits" # path to the input cube
 chandra_image="/home/agurpide/x_ray_data/NGC1672/chandradata/5932/detectedsources/sourceimage_broadband.fits"
 ulx_region="/home/agurpide/x_ray_data/NGC1672/chandradata/5932/repro/ixo27.reg"
@@ -21,6 +21,7 @@ fi
 
 # adjust coordinates; white light image will be created
 if [ $hst_image != "" ]; then
+	printf "Adjusting coordinates with Hubble image: $hst_image \n"
 	$exec_python/adjust_coordinates.py $input_cube --hst $hst_image -o coordadjusted
 	input_cube=corr$input_cube
 	white_light=wlight$input_cube
@@ -48,7 +49,7 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
 	echo "Input region file"
 	read star_reg
 	# determine PSF by fitting a Moffat profile to it
-	$exec_python/determine_psf.py $input_cube --fit --fitting_region $star_reg -l 100 -t 6
+	$exec_python/determine_psf.py $input_cube --fit -r $star_reg -l 100 -t 6
 else
 # use Tokovinin mode instead
 	$exec_python/determine_psf.py $input_cube -t 6
@@ -59,12 +60,11 @@ echo "Input average FWHM in arcsec:"
 
 read fwhm
 
-$exec_python/findstars.py $white_light --fwhm $fwhm -t 3 -s 2
+$exec_python/findstars.py $white_light --fwhm $fwhm -t 4 -s 2
 
 echo "Copying catalog regions and saving them as zap_mask.reg"
 
-
-zap_region_size=$(echo "scale=3; 5*$fwhm" | bc)
+zap_region_size=$(echo "scale=3; 2*$fwhm" | bc)
 
 zap_regions_out="zap_mask"${white_light//fits/reg}
 
@@ -73,8 +73,7 @@ echo "Converting dao sources to ZAP regions with radius $zap_region_size arcsec"
 
 rm zap_mask.sym
 
-printf "condition\tshape\tcolor\twidth\tdash\tfont\tfontsize\tfontweight\tfontslant\ttext\tsize\tsize2\tunits\tangle\n
----------\t-----\t-----\t-----\t----\t----\t--------\t----------\t---------\t----\t----\t-----\t-----\t-----\n" >> zap_mask.sym
+printf "condition\tshape\tcolor\twidth\tdash\tfont\tfontsize\tfontweight\tfontslant\ttext\tsize\tsize2\tunits\tangle\n---------\t-----\t-----\t-----\t----\t----\t--------\t----------\t---------\t----\t----\t-----\t-----\t-----\n" >> zap_mask.sym
 
 printf "\tcircle\tcyan\t2\t0\thelvetica\t10\tnormal\troman\t\t$zap_region_size\t\tarcsec" >> zap_mask.sym
 
@@ -84,8 +83,7 @@ dao_find_reg="daofind"${white_light//fits/reg}
 
 rm $dao_find_reg
 
-printf "condition\tshape\tcolor\twidth\tdash\tfont\tfontsize\tfontweight\tfontslant\ttext\tsize\tsize2\tunits\tangle\n
----------\t-----\t-----\t-----\t----\t----\t--------\t----------\t---------\t----\t----\t-----\t-----\t-----\n" >> daofind.sym
+printf "condition\tshape\tcolor\twidth\tdash\tfont\tfontsize\tfontweight\tfontslant\ttext\tsize\tsize2\tunits\tangle\n---------\t-----\t-----\t-----\t----\t----\t--------\t----------\t---------\t----\t----\t-----\t-----\t-----\n" >> daofind.sym
 printf "\tcircle\tcyan\t2\t0\thelvetica\t10\tnormal\troman\t\t$fwhm\t\tarcsec" >> daofind.sym
 
 $ds9_command $input_cube -catalog import csv allstars$catalog_out -catalog symbol load daofind.sym -catalog regions -regions save $dao_find_reg -exit
@@ -106,6 +104,8 @@ echo "Chose cut extension and create catalog file with source coordinates"
 echo "Redshift $redshift"
 
 $ds9_command -tile $chandra_image -scale mode 100 $input_cube -scale mode 99.5 $white_light -scale mode 99.5 -regions load all $ulx_region -regions load all $dao_find_reg & 
+
+# catalog for camel
 camel_catalog=camel_cat.txt
 gedit camel_cat.txt &
 
@@ -118,16 +118,54 @@ read fwhm_pixels
 
 gauss_smooth=$(echo "scale=0; $fwhm/$fwhm_pixels/2" | bc)
 
+echo "Gaussian smoothing in pixels: $gauss_smooth"
+
 echo 'Input cut around the source in pixels'
 read dxy
 
-
 echo "Input source ID"
 read sourceId
-lines=n2has2
-mkdir _$sourceId\_$lines
 
-create_config="import os; cwd = os.getcwd(); os.chdir(os.environ['HOME'] + '/scripts/pythonscripts/muse/camel/'); import create_config as cg; os.chdir(cwd); cg.create_config('./','${input_cube}', '${input_cube}', '${camel_catalog}', '${lines}', '', commonw=False, dz=(float('${redshift}')/5), dxy=int('${dxy}'), wmax=1000, degcont=1, ssmooth='${gauss_smooth}')"
+# Halpha nitrogen complex
+lines=n2ha
+mkdir "camel_"$sourceId\_$lines
+
+create_config="import os; cwd = os.getcwd(); os.chdir(os.environ['HOME'] + '/scripts/pythonscripts/muse/camel/'); import create_config as cg; os.chdir(cwd); cg.create_config('./','${input_cube}', '${input_cube}', '${camel_catalog}', '${lines}', 'camel', commonw=False, dz=0.005, dxy=int('${dxy}'), wmax=1000, degcont=1, ssmooth='${gauss_smooth}', initw=100)"
+python -c "${create_config}"
+
+# sulfur lines
+lines=s2
+mkdir "camel_"$sourceId\_$lines
+
+create_config="import os; cwd = os.getcwd(); os.chdir(os.environ['HOME'] + '/scripts/pythonscripts/muse/camel/'); import create_config as cg; os.chdir(cwd); cg.create_config('./','${input_cube}', '${input_cube}', '${camel_catalog}', '${lines}', 'camel', commonw=False, dz=0.005, dxy=int('${dxy}'), wmax=1000, degcont=1, ssmooth='${gauss_smooth}', initw=100)"
+python -c "${create_config}"
+
+# hbeta
+lines=hb
+mkdir "camel_"$sourceId\_$lines
+
+create_config="import os; cwd = os.getcwd(); os.chdir(os.environ['HOME'] + '/scripts/pythonscripts/muse/camel/'); import create_config as cg; os.chdir(cwd); cg.create_config('./','${input_cube}', '${input_cube}', '${camel_catalog}', '${lines}', 'camel', commonw=False, dz=0.005, dxy=int('${dxy}'), wmax=1000, degcont=1, ssmooth='${gauss_smooth}', initw=100)"
+python -c "${create_config}"
+
+# oxygen III lines 
+lines=o3
+mkdir "camel_"$sourceId\_$lines
+
+create_config="import os; cwd = os.getcwd(); os.chdir(os.environ['HOME'] + '/scripts/pythonscripts/muse/camel/'); import create_config as cg; os.chdir(cwd); cg.create_config('./','${input_cube}', '${input_cube}', '${camel_catalog}', '${lines}', 'camel', commonw=False, dz=0.005, dxy=int('${dxy}'), wmax=1000, degcont=1, ssmooth='${gauss_smooth}', initw=100)"
+python -c "${create_config}"
+
+# oxygen I line
+lines=oI
+mkdir "camel_"$sourceId\_$lines
+
+create_config="import os; cwd = os.getcwd(); os.chdir(os.environ['HOME'] + '/scripts/pythonscripts/muse/camel/'); import create_config as cg; os.chdir(cwd); cg.create_config('./','${input_cube}', '${input_cube}', '${camel_catalog}', '${lines}', 'camel', commonw=False, dz=0.005, dxy=int('${dxy}'), wmax=1000, degcont=1, ssmooth='${gauss_smooth}', initw=100)"
+python -c "${create_config}"
+
+# He I line
+lines=heI
+mkdir "camel_"$sourceId\_$lines
+
+create_config="import os; cwd = os.getcwd(); os.chdir(os.environ['HOME'] + '/scripts/pythonscripts/muse/camel/'); import create_config as cg; os.chdir(cwd); cg.create_config('./','${input_cube}', '${input_cube}', '${camel_catalog}', '${lines}', 'camel', commonw=False, dz=0.005, dxy=int('${dxy}'), wmax=1000, degcont=1, ssmooth='${gauss_smooth}', initw=100)"
 python -c "${create_config}"
 
 

@@ -9,8 +9,7 @@ import os
 from astropy.coordinates import SkyCoord
 from astroquery.gaia import Gaia
 from astroquery.mast import Observations
-
-
+import numpy as np
 from ccdproc import ImageFileCollection
 
 from drizzlepac import tweakreg
@@ -27,6 +26,7 @@ ap.add_argument("--update", help="Update header file with the new solution. Defa
 # parse args
 args = ap.parse_args()
 nsigma = 3
+proper_motion_threshold = 20  # mas/yr
 
 # logger
 scriptname = os.path.basename(__file__)
@@ -35,11 +35,6 @@ logger = logging.getLogger(scriptname)
 logger.setLevel(logging.DEBUG)
 out_format = logging.Formatter('%(name)s - %(levelname)s - %(message)s')
 
-# handler
-stream_handler = logging.StreamHandler()
-stream_handler.setLevel(logging.DEBUG)
-stream_handler.setFormatter(out_format)
-logger.addHandler(stream_handler)
 
 target = args.target
 search_radius = args.radius * u.arcsec
@@ -72,23 +67,38 @@ table = collec.summary
 
 ra_targ = table['CRVAL1'][0]
 dec_targ = table['CRVAL2'][0]
-logger.info("Looking Gaia sources around (%.3f, %.3f) with radius %.3f" % (ra_targ, dec_targ, search_radius.value))
+logger.info("Looking Gaia sources around (%.3f, %.3f) with radius %.3f with less than %.1f mas/yr" % (ra_targ, dec_targ, search_radius.value, proper_motion_threshold))
 coord = SkyCoord(ra=ra_targ, dec=dec_targ, unit=(u.deg, u.deg))
 # query Gaia sources and write the result
 ref_cat = 'gaia_hst.csv'
 gaia_query = Gaia.query_object_async(coordinate=coord, radius=search_radius)
-reduced_query = gaia_query['ra', 'dec', 'phot_g_mean_mag', 'ra_error', 'dec_error', 'ref_epoch']
-reduced_query.write(ref_cat, format='ascii.commented_header', delimiter='\t')
+
+reduced_query = gaia_query['ra', 'dec', 'ra_error', 'dec_error', 'phot_g_mean_mag', 'ref_epoch', 'pmra', 'pmdec', 'pmra_error', 'pmdec_error', 'solution_id']
+
+# np.abs was giving problems here so just filter twice with 10 and -10 proper motions are in mas
+filter = ((np.abs(reduced_query['pmdec']) < proper_motion_threshold) & ((np.abs(reduced_query['pmra']) < proper_motion_threshold)) | (reduced_query['pmra'].mask == True))
+reduced_query = reduced_query[filter]
+reduced_query.write(ref_cat, format='ascii.commented_header', delimiter='\t', overwrite=True)
+
 
 wcsname = 'gaia'
 
 cw = 3.5   #  The convolution kernel width in pixels. Recommended values (~2x the PSF FWHM): ACS/WFC & WFC3/UVIS ~3.5 pix and WFC3/IR ~2.5 pix.
+# ACS/WFC 0.05 arcsec/pixel
 
 tweakreg.TweakReg('*drz.fits',  # Pass input images
                   updatehdr=args.update,  # update header with new WCS solution
-                  imagefindcfg={'threshold': 100., 'cw': cw},  # Detection parameters, threshold varies for different data
+                  imagefindcfg={'threshold': 400., 'cw': cw},  # Detection parameters, threshold varies for different data
                   refcat=ref_cat,  # Use user supplied catalog (Gaia)
                   interactive=False,
+                  use_sharp_round=True,
+                  sharphi=0.95,
+                  roundhi=0.85,
+                  roundlo=-0.85,
+                  sharplo=0.2,
+                  minflux=0,
+                  maxflux=10000,
+                  fluxunits='counts',
                   see2dplot=True,
                   verbose=False,
                   shiftfile=True,  # Save out shift file (so we can look at shifts later)
@@ -97,7 +107,8 @@ tweakreg.TweakReg('*drz.fits',  # Pass input images
                   reusename=True,
                   sigma=3,
                   nclip=4,
-                  searchrad=2.0,
+                  searchrad=1.,
+                  searchunits='arcseconds',
                   minobj=5,
                   fitgeometry='general',
                   exclusions=args.mask)  # Use the 6 parameter fit
