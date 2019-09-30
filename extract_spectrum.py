@@ -6,7 +6,7 @@
 # 25-03-2019
 # !/usr/bin/env python3
 # imports
-from mpdaf.obj import Cube
+from mpdaf.obj import Cube, Image
 from mpdaf.sdetect import compute_optimal_spectrum
 import argparse
 import os
@@ -26,6 +26,7 @@ ap.add_argument("-o", "--outdir", nargs='?', help="Name of the output directory"
 ap.add_argument("--lmin", help='Minimum wavelength to cut the cube spectrally', type=float, nargs='?', default=0)
 ap.add_argument("--lmax", help='Maximum wavelength to cut the cube spectrally', type=float, nargs='?', default=100000)
 ap.add_argument("--psf", help='Fits file containing the FWHM as a function of wavelength', type=str, nargs='?', default=None)
+ap.add_argument("--e_fraction", help='Energy fraction to be enclosed in the extraction region', type=float, nargs='?', default=0.5)
 ap.add_argument("-mode", choices=["sum", "mean", "psf"], default="sum")
 ap.add_argument("--ext", help='Extension to read from the PSF fits file', type=int, nargs='?', default=2)
 
@@ -37,7 +38,7 @@ outdir = args.outdir
 extraction_mode = args.mode
 extension = args.ext
 
-e_fraction = 0.5
+e_fraction = args.e_fraction
 
 scriptname = os.path.basename(__file__)
 # logger
@@ -51,6 +52,9 @@ stream_handler = logging.StreamHandler()
 stream_handler.setLevel(logging.DEBUG)
 stream_handler.setFormatter(out_format)
 logger.addHandler(stream_handler)
+
+figure_comparison = None
+white_light_image = None
 
 if os.path.isfile(region_file):
     regs = read_ds9(region_file)
@@ -122,28 +126,8 @@ for cubefile in muse_cubes:
                 logger.error("PSF mode requires a fits file PSF")
                 sys.exit()
             else:
-                w_img = subcube.sum(axis=0)
-                source_peak = w_img.peak()
-                profile = w_img.moffat_fit(center=(source_peak['y'], source_peak['x']), n=3, full_output=True, factor=1)
-                center_pix = w_img.wcs.sky2pix(profile.center)[0]
-                square_size_x, square_size_y = w_img.ee_size(center=(profile.center), cont=profile.cont, frac=e_fraction)
-                radius = square_size_x /2
-                logger.info("Extraction radius determining energy fraction of %.1f is %.1f arcsec" % (e_fraction, radius))
-                figure_comparison, axes = plt.subplots(nrows=2, ncols=1, figsize=(16.0, 10.0), subplot_kw={'projection': w_img.wcs.wcs}, sharex=True)
-                moffat_ax = axes[1]
-                # we need one region for each plot
-                # X is the size of a square so its half of the radius
-                ex_region_moffat = plt.Circle(center_pix, radius / w_img.get_step('arcsec')[0], color='b', fill=False)
-                moffat_ax.add_artist(ex_region_moffat)
-                profile.ima.plot(ax=moffat_ax, title="Extraction region for region %i" % reg_index)
-                image_ax = axes[0]
-                ex_region_image = plt.Circle(center_pix, radius / w_img.get_step('arcsec')[0], color='b', fill=False)
-                image_ax.add_artist(ex_region_image)
-                w_img.plot(ax=image_ax)
-                plt.show()
-                logger.info("Cutting extraction region encircling %.1f %% of the energy..." % e_fraction)
-                subcube = subcube.subcube_circle_aperture((profile.center), radius, unit_center='deg', unit_radius='arcsec', unit_wave=cube.wave.unit)
-                subcube.crop()
+
+                white_light_image = subcube.sum(axis=0)
 
                 psf_table, header, headername = mu.read_psf_fits(args.psf, extension)
 
@@ -152,13 +136,50 @@ for cubefile in muse_cubes:
                 else:
                     avg_beta = None
 
-                    logger.info("Creating PSF cube...")
+                logger.info("Creating PSF cube...")
                 psf_cube = psf.create_psf_cube(subcube.shape, psf_table["FWHM"], avg_beta, subcube.wcs)
+                psf_moffat = Image(wcs=white_light_image.wcs, data=np.sum(psf_cube, axis=0), cmap='inferno', mask=white_light_image.mask)
+                peak_center = psf_moffat.peak()
+                energy_square_size_x, energy_square_size_y = psf_moffat.ee_size(center=(peak_center['y'], peak_center['x']), cont=0, frac=e_fraction)
+                center_pix = psf_moffat.wcs.sky2pix((peak_center['y'], peak_center['x']))[0]
+                radius = energy_square_size_x / 2
+                logger.info("Extraction radius determining energy fraction of %.1f is %.1f arcsec" % (e_fraction, radius))
+                figure_comparison, axes = plt.subplots(nrows=1, ncols=2, figsize=(16.0, 10.0), subplot_kw={'projection': white_light_image.wcs.wcs},
+                                                       gridspec_kw={'wspace': 0, 'hspace': 0}, sharex=True)
+                figure_comparison.suptitle(t="Extraction region for region %i" % reg_index)
+                moffat_ax = axes[1]
+
+                # we need one region for each plot
+                # X is the size of a square so its half of the radius
+                ex_region_moffat = plt.Circle(center_pix, radius / white_light_image.get_step('arcsec')[0], color='b', fill=False)
+                moffat_ax.add_artist(ex_region_moffat)
+                moffat_ax.set_yticklabels([])
+                moffat_ax.set_title("PSF")
+                psf_moffat.plot(ax=moffat_ax)
+                moffat_ax.set_yticklabels([])
+
+                image_ax = axes[0]
+                peak_wimage = white_light_image.peak()
+                image_ax.set_title("Extraction region")
+                image_ax.errorbar(peak_wimage["p"], peak_wimage["q"], lw=0, fmt='x', color='red')
+                ex_region_image = plt.Circle(center_pix, radius / white_light_image.get_step('arcsec')[0], color='b', fill=False)
+                image_ax.add_artist(ex_region_image)
+                white_light_image.plot(ax=image_ax)
+                plt.show()
+                logger.info("Cutting extraction region encircling %.1f %% of the energy..." % e_fraction)
+                subcube = subcube.subcube_circle_aperture((peak_wimage['y'], peak_wimage['x']), radius, unit_center='deg', unit_radius='arcsec',
+                                                          unit_wave=cube.wave.unit)
+                subcube.crop()
+                # cut PSF again with new cube (maybe unnecessary but just so the mask and the cube sizes match)
+                psf_cube = psf.create_psf_cube(subcube.shape, psf_table["FWHM"], avg_beta, subcube.wcs)
+
                 logger.info("Extracting spectrum weighted by PSF")
-                dummy_mask = np.ones((subcube.shape[1], subcube.shape[2])) # dummy mask required by the method
+                dummy_mask = np.ones((subcube.shape[1], subcube.shape[2]))  # dummy mask required by the method
                 spe = compute_optimal_spectrum(subcube, dummy_mask, psf_cube)
         # create white light image
-        white_light_image = subcube.sum(axis=0)
+        if white_light_image is None:
+            white_light_image = subcube.sum(axis=0)
+
         plt.figure()
         spe.info()
         spe.plot(title="Extracted spectrum for region %i" % reg_index)
@@ -179,7 +200,8 @@ for cubefile in muse_cubes:
         spe.write("%s/%s%s_spec.fits" % (outdir, outcubename, outname))
         white_light_image.write("%s/%s%s_img.fits" % (outdir, outcubename, outname))
         subcube.write("%s/%s%s_subcube.fits" % (outdir, outcubename, outname))
-        figure_comparison.savefig("%s/%s%sextraction_region.pdf" % (outdir, outcubename, outname))
+        if figure_comparison is not None:
+            figure_comparison.savefig("%s/%s%sextraction_region.pdf" % (outdir, outcubename, outname))
 
         subcue = None # free memory
     cube = None

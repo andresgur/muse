@@ -5,18 +5,18 @@
 # !/usr/bin/env python3
 
 # imports
-from mpdaf.obj import Image, Moffat2D
-import matplotlib.pyplot as plt
-import argparse
-import os
-import muse_utils as mu
+    from mpdaf.obj import Image, Moffat2D
+    import matplotlib.pyplot as plt
+    import argparse
+    import os
+    import muse_utils as mu
 
-import logging
-import pyregion
-import numpy as np
-from astropy.io import fits
-import mpdaf.MUSE.PSF as psf
-import glob
+    import logging
+    import pyregion
+    import numpy as np
+    from astropy.io import fits
+    import mpdaf.MUSE.PSF as psf
+    import glob
 
 
 # ------------------------------
@@ -127,6 +127,7 @@ contours_ax[0].set_ylabel('Dec', fontsize=20)
 im = contours_ax[1].images
 cb = im[-1].colorbar
 cb.ax.set_ylabel(mu.add_zlabel("moffat_fit", intensity_map.unit), fontsize=14)
+
 #figure_comparison.tight_layout()
 figure_comparison.subplots_adjust(hspace=0)
 

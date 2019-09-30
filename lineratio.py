@@ -59,7 +59,7 @@ ratio_fits.data[np.where(map2data is None)] = None
 
 ratio_fits.header['COMMENT'] = "Ratio of %s/%s line maps" % (added_maps_log, linemap2)
 if ratio_fits.header['WCSAXES'] == 3:
-    ratio_fits.header['WCSAXES'] = 2
+    ratio_fits.header['WCSAXES'] = 2  # set number of axes 2 for the image
 
 ratio_fits.writeto(outdir + "/" + outname + ".fits", overwrite=True)
 print('Line ratio %s/%s written to %s/%s.fits' % (added_maps_log, linemap2, outdir, outname))

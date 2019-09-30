@@ -1,4 +1,4 @@
-# Script to adjust the coordinates of a cube from an input image( Preferabley HST)
+# Script to adjust the coordinates of a cube from an input image by cross-correlating it( Preferabley HST)
 # Created the 10/06/2019 by Andres Gurpide
 # imports
 import argparse
@@ -55,7 +55,10 @@ if os.path.isfile(input_cube) and os.path.isfile(hst_image):
     cube.wcs.set_crpix1(white_image.wcs.get_crpix1())
     cube.wcs.set_crpix2(white_image.wcs.get_crpix2())
     cube.wcs.set_cd(white_image.wcs.get_cd())
-    cube.primary_header["HISTORY"] = ("%.2f, %.2f" % (dy, dx), 'Coordinate shift dy, dx in arcsec')
+    pixel_scale = cube.primary_header['HIERARCH ESO OCS IPS PIXSCALE']
+    cube.primary_header["ASTRO_CORR_PX"] = ("%.2f, %.2f" % (dy, dx), 'Coordinate shift dy, dx in pixels')
+    cube.primary_header["ASTRO_CORR_AS"] = ("%.2f, %.2f" % ((dy * pixel_scale), (dx * pixel_scale)), 'Coordinate shift dy, dx in arcseconds')
+
     cube.write(outcube)
 else:
     logger.error("Input cube %s or HST image %s not found" % (input_cube, hst_image))

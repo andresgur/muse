@@ -18,7 +18,7 @@ from specutils.fitting import find_lines_threshold
 from mpdaf.sdetect import matchlines, get_emlines, crackz
 from astropy.stats import sigma_clipped_stats
 from astropy.nddata.nduncertainty import StdDevUncertainty
-from mpdaf.sdetect.source import emlines
+from .source import emlines
 from specutils.manipulation import noise_region_uncertainty
 from astropy.table import Table
 from astropy.table import Column

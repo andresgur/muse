@@ -303,10 +303,11 @@ if args.psf_regions is not None:
                 logger.info("Fitting region %s. Circular profile: %r" % (stem, circular_fit))
                 fit_profiles, fit_cube = estimate_fwhm(cube, center_guess=fit_center, threads=args.threads, fwhm_guess=guessed_fwhm, circular=circular_fit, fit_n=fit_n, n=n)
                 fit_cube.write('%s/fitcube%s' % (out_dir, stem_out))
+
                 # filter out bad fittings
                 good_fit_profiles, good_wavelengts = zip(*((profile, wa) for wa, profile in zip(fit_cube.wave.coord(), fit_profiles) if profile.err_fwhm[0] < 10**3
                                                          and sqrt((profile.center[0] - fit_center[0])**2 + (profile.center[1] - fit_center[1])**2) < tolerance and np.isfinite(profile.flux) and profile.flux > 0))
-
+                fit_cube = None  # free memory
                 fwhm_x = [profile.fwhm[0] for profile in good_fit_profiles]
                 err_fwhmx = [profile.err_fwhm[0] for profile in good_fit_profiles]
                 fwhm_y = [profile.fwhm[1] for profile in good_fit_profiles]
@@ -318,23 +319,22 @@ if args.psf_regions is not None:
 
                 # plot psf FWHM
                 cube_psf_ax.errorbar(x=good_wavelengts, y=fwhm_x, yerr=err_fwhmx, ls="-", linewidth=0.5,
-                                     markersize=4, color=color, label='%s' % stem, fmt='.', elinewidth=1, errorevery=4)
+                                     markersize=4, label='%s' % stem, fmt='.', elinewidth=1, errorevery=4)
                 # keep beta index for moffat fit
                 if args.profile == "moffat":
                     betas = [profile.n for profile in good_fit_profiles]
                     err_betas = [profile.err_n for profile in good_fit_profiles]
                     beta_ax.errorbar(x=good_wavelengts, y=betas, yerr=err_betas, ls="-", linewidth=0.5,
-                                     markersize=4, color=color, label='%s' % stem, fmt='.', elinewidth=1, errorevery=4)
+                                     markersize=4, label='%s' % stem, fmt='.', elinewidth=1, errorevery=4)
 
                 # if it is not circular, get y axis of the FWHM
                 if not args.elliptical:
                     cube_psf_ax.errorbar(x=good_wavelengts, y=fwhm_y, yerr=err_fwhmy, ls="-", linewidth=0.5,
-                                         markersize=4, color=color, label='%s' % stem, fmt='.', elinewidth=1, errorevery=4)
+                                         markersize=4, label='%s' % stem, fmt='.', elinewidth=1, errorevery=4)
                 # plot PSF centers
                 cube_center_ax.errorbar(x=centerx, y=centery, yerr=err_centery, xerr=err_centerx,
-                                        markersize=4, color=color, label='%s x' % stem, fmt='.', ls=None)
+                                        markersize=4, label='%s x' % stem, fmt='.', ls=None)
 
-                fit_cube = None  # free memory
                 model = PolynomialModel(degree=2)
                 params = model.make_params(c0=c0, c1=c1, c2=c2)
                 fwhm_fit = model.fit([profile.fwhm[0] for profile in good_fit_profiles], params, x=good_wavelengts, weights=err_fwhmx)
@@ -387,7 +387,7 @@ if args.psf_regions is not None:
             # get profiles for the fits
             fractions_profile = [profile.ima.eer_curve(center=profile.center, cont=0) for profile in good_fit_profiles]
 
-            [ax_eer_circle.errorbar(x=fraction[1], y=fraction[0], color="blue", linewidth=0.4, ls=':', label='%s%s' % (args.profile, stem)) for fraction in fractions_profile]
+            [ax_eer_circle.errorbar(x=fraction[1], y=fraction[0], color=color, linewidth=0.4, ls=':', label='%s%s' % (args.profile, stem)) for fraction in fractions_profile]
 
             for l, line_color in enumerate(line_colors):
                 # ax_eer_circle.errorbar(x=radius_fractions[l][1], y=radius_fractions[l][0], color=color, linewidth=0.5, ls=linestyle, label="%.2f $\AA$" % cube.wave.coord()[l])
@@ -486,7 +486,7 @@ if args.psf_regions is not None:
             res_out_name = fit_out_name.replace("fit.fits", "res.fits")
             fit_res.write(out_dir + "/" + res_out_name)
 
-            # compute energy enclosed as a function of radius
+            # compute energy enclosed as a function of radius for the image and for the fit
             radius, energy_values = image.eer_curve(cont=profile_fit.cont, center=profile_fit.center)
             radius_fit, energy_values_fit = profile_fit.ima.eer_curve(cont=profile_fit.cont, center=profile_fit.center)
 

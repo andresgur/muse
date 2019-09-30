@@ -50,6 +50,7 @@ def region_to_mask(image, region):
     returns a ndarray with 0 for masked values and 1 for non-masked values
     """
     mask_region = pyregion.open(region)
+    print(mask_region)
     mask = mask_region.get_mask(hdu=image.get_data_hdu())
     mask = ~mask
     return mask

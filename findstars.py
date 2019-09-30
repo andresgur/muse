@@ -34,7 +34,7 @@ parser.add_argument("-m", "--mask", help='Optional mask region to mask certain p
 
 args = parser.parse_args()
 
-show_mask = 0
+show_mask = 1
 
 sigma_clip = args.sigma
 
@@ -71,31 +71,37 @@ for image_file in args.images:
 
         logger.info("FWHM = %.1f pixels " % fwhm_pixels)
 
-        # mask most prominent sources for background computation
-        mask = make_source_mask(image.data, snr=2, filter_fwhm=int(fwhm_pixels), filter_size=int(3 * fwhm_pixels), dilate_size=int(2 * fwhm_pixels), npixels=int(fwhm_pixels))
+        # mask most prominent sources for background computation (not used)
+        mask = make_source_mask(image.data, nsigma=2, filter_fwhm=int(fwhm_pixels), filter_size=int(3 * fwhm_pixels), dilate_size=int(2 * fwhm_pixels), npixels=int(fwhm_pixels))
 
         nx = image.wcs.naxis1
         ny = image.wcs.naxis2
 
         sigma_clipping = SigmaClip(sigma=sigma_clip)
 
-        bkg_box_size = (image.wcs.naxis1 // 6, image.wcs.naxis2 // 6)
+        bkg_box_size = (nx // 6, ny // 6)
 
         logger.info("Box size for the 2D background calculation pixels: \n")
         logger.info(bkg_box_size)
         bkg_estimator = MedianBackground()
         bkg = Background2D(image.data, bkg_box_size, sigma_clip=sigma_clipping)  # uses sextractor background estimator by default
 
-        fig, axs = plt.subplots(nrows=2, ncols=2)
-        titles = ["Mask", "Background", "Data", "Data - Background"]
-        data = [mask, bkg.background, image.data, image.data - bkg.background]
-        
-        for title, ax, dataset in zip(titles, axs.flat, data):
-            ax.imshow(dataset, origin="lower", cmap='inferno')
+        fig, axs = plt.subplots(nrows=2, ncols=2, sharex=True)
+        fig.subplots_adjust(wspace=0, hspace=0)
+        masked_bkg = np.ma.masked_array(bkg.background, image.data.mask)
+        titles = ["Background", "Data", "Data - Background", "Data - data + background"]
+        sub_data = image.data - masked_bkg
+        sub_subdata = image.data - sub_data
+        plot_data = [masked_bkg, image.data, sub_data, sub_subdata]
+
+        for title, ax, dataset in zip(titles, axs.flat, plot_data):
+            im = ax.imshow(dataset, origin="lower", cmap='inferno', vmin=10000)
             ax.set_title(title)
+            fig.colorbar(im, ax=ax)
         fig.savefig("daofind.pdf")
 
         if show_mask:
+
             plt.show()
 
         # compute background sigma clipping the masked image
@@ -103,7 +109,7 @@ for image_file in args.images:
         mean, median, std = sigma_clipped_stats(image.data, sigma=sigma_clip)
         # compute the standard deviation of the original image
 
-        daofind_brightest = DAOStarFinder(fwhm=fwhm_pixels, threshold=sigma_threshold * std, brightest=brightest, exclude_border=True, sigma_radius=3)
+        daofind_brightest = DAOStarFinder(fwhm=fwhm_pixels, threshold=sigma_threshold * std, brightest=brightest, exclude_border=True, sigma_radius=2)
         # apply mask if provided
         if masked_region is not None and 'reg' in masked_region:
             logger.info("Masking region inside %s" % masked_region)
@@ -113,11 +119,11 @@ for image_file in args.images:
         else:
             mask = None
 
-        sources_brightest = daofind_brightest(image.data - bkg.background, mask=mask)
+        sources_brightest = daofind_brightest(sub_data, mask=mask)
 
-        daofind_all = DAOStarFinder(fwhm=fwhm_pixels, threshold=sigma_threshold * std, exclude_border=True, sigma_radius=3)
+        daofind_all = DAOStarFinder(fwhm=fwhm_pixels, threshold=sigma_threshold * std, exclude_border=True, sigma_radius=2)
 
-        sources_all = daofind_all(image.data - bkg.background, mask=mask)
+        sources_all = daofind_all(sub_data, mask=mask)
 
         yx = np.stack((sources_all['ycentroid'].data, sources_all['xcentroid'].data)).T
 

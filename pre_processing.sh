@@ -6,7 +6,7 @@ ulx_region="/home/agurpide/x_ray_data/NGC1672/chandradata/5932/repro/ixo27.reg"
 run_Zap=false
 clean_nan=false
 ds9_command="$DS9_PATH/ds9 -cmap Heat -mode region"
-exec_python="python $HOME/scripts/pythonscripts/muse"
+exec_python="python3 $HOME/scripts/pythonscripts/muse"
 redshift=0.004464
 
 # stop script if something goes wrong
@@ -30,7 +30,7 @@ if [ $hst_image != "" ]; then
 else
 	# create white light image otherwise
 	white_light_image="from mpdaf.obj import Cube;cubein = '${input_cube}'; cube = Cube(cubein);img = cube.sum(axis=0); print('Saving image to white%s' % cubein);  img.write('white%s' % cubein)"
-	python -c "${white_light_image}"
+	python3 -c "${white_light_image}"
 	white_light=white$input_cube
 
 fi 
@@ -86,7 +86,7 @@ rm $dao_find_reg
 printf "condition\tshape\tcolor\twidth\tdash\tfont\tfontsize\tfontweight\tfontslant\ttext\tsize\tsize2\tunits\tangle\n---------\t-----\t-----\t-----\t----\t----\t--------\t----------\t---------\t----\t----\t-----\t-----\t-----\n" >> daofind.sym
 printf "\tcircle\tcyan\t2\t0\thelvetica\t10\tnormal\troman\t\t$fwhm\t\tarcsec" >> daofind.sym
 
-$ds9_command $input_cube -catalog import csv allstars$catalog_out -catalog symbol load daofind.sym -catalog regions -regions save $dao_find_reg -exit
+$ds9_command $white_light -catalog import csv allstars$catalog_out -catalog symbol load daofind.sym -catalog regions -regions save $dao_find_reg -exit
 
 
 if $run_Zap ; then
@@ -110,7 +110,7 @@ camel_catalog=camel_cat.txt
 gedit camel_cat.txt &
 
 get_pixelsize="from mpdaf.obj import Image;image_file = '${white_light}'; image = Image(image_file);print('Pixel size %.1f' % image.primary_header['HIERARCH ESO OCS IPS PIXSCALE'])"
-	python -c "${get_pixelsize}"
+	python3 -c "${get_pixelsize}"
 
 echo 'Input pixel size of the cube'
 
@@ -131,42 +131,42 @@ lines=n2ha
 mkdir "camel_"$sourceId\_$lines
 
 create_config="import os; cwd = os.getcwd(); os.chdir(os.environ['HOME'] + '/scripts/pythonscripts/muse/camel/'); import create_config as cg; os.chdir(cwd); cg.create_config('./','${input_cube}', '${input_cube}', '${camel_catalog}', '${lines}', 'camel', commonw=False, dz=0.005, dxy=int('${dxy}'), wmax=1000, degcont=1, ssmooth='${gauss_smooth}', initw=100)"
-python -c "${create_config}"
+python3 -c "${create_config}"
 
 # sulfur lines
 lines=s2
 mkdir "camel_"$sourceId\_$lines
 
 create_config="import os; cwd = os.getcwd(); os.chdir(os.environ['HOME'] + '/scripts/pythonscripts/muse/camel/'); import create_config as cg; os.chdir(cwd); cg.create_config('./','${input_cube}', '${input_cube}', '${camel_catalog}', '${lines}', 'camel', commonw=False, dz=0.005, dxy=int('${dxy}'), wmax=1000, degcont=1, ssmooth='${gauss_smooth}', initw=100)"
-python -c "${create_config}"
+python3 -c "${create_config}"
 
 # hbeta
 lines=hb
 mkdir "camel_"$sourceId\_$lines
 
 create_config="import os; cwd = os.getcwd(); os.chdir(os.environ['HOME'] + '/scripts/pythonscripts/muse/camel/'); import create_config as cg; os.chdir(cwd); cg.create_config('./','${input_cube}', '${input_cube}', '${camel_catalog}', '${lines}', 'camel', commonw=False, dz=0.005, dxy=int('${dxy}'), wmax=1000, degcont=1, ssmooth='${gauss_smooth}', initw=100)"
-python -c "${create_config}"
+python3 -c "${create_config}"
 
 # oxygen III lines 
 lines=o3
 mkdir "camel_"$sourceId\_$lines
 
 create_config="import os; cwd = os.getcwd(); os.chdir(os.environ['HOME'] + '/scripts/pythonscripts/muse/camel/'); import create_config as cg; os.chdir(cwd); cg.create_config('./','${input_cube}', '${input_cube}', '${camel_catalog}', '${lines}', 'camel', commonw=False, dz=0.005, dxy=int('${dxy}'), wmax=1000, degcont=1, ssmooth='${gauss_smooth}', initw=100)"
-python -c "${create_config}"
+python3 -c "${create_config}"
 
 # oxygen I line
 lines=oI
 mkdir "camel_"$sourceId\_$lines
 
 create_config="import os; cwd = os.getcwd(); os.chdir(os.environ['HOME'] + '/scripts/pythonscripts/muse/camel/'); import create_config as cg; os.chdir(cwd); cg.create_config('./','${input_cube}', '${input_cube}', '${camel_catalog}', '${lines}', 'camel', commonw=False, dz=0.005, dxy=int('${dxy}'), wmax=1000, degcont=1, ssmooth='${gauss_smooth}', initw=100)"
-python -c "${create_config}"
+python3 -c "${create_config}"
 
 # He I line
 lines=heI
 mkdir "camel_"$sourceId\_$lines
 
 create_config="import os; cwd = os.getcwd(); os.chdir(os.environ['HOME'] + '/scripts/pythonscripts/muse/camel/'); import create_config as cg; os.chdir(cwd); cg.create_config('./','${input_cube}', '${input_cube}', '${camel_catalog}', '${lines}', 'camel', commonw=False, dz=0.005, dxy=int('${dxy}'), wmax=1000, degcont=1, ssmooth='${gauss_smooth}', initw=100)"
-python -c "${create_config}"
+python3 -c "${create_config}"
 
 
 
